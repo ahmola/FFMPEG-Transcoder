@@ -1,0 +1,38 @@
+I-Frame, P-Frame의 이해를 돕기 위한 페이지입니다.
+
+![img]
+Group of Pictures
+ 
+
+Group Of Pictures
+여러 장의 연속 나열된 이미지 프레임들의 집합
+
+인코딩 시에, 이렇게 여러 이미지 프레임들의 묶음인 GOP 단위로 인코딩이 됩니다
+
+ 
+
+I-Frame(Intra Frame)
+Key Frame이라고 불리며, GOP의 핵심 프레임입니다.
+
+GOP의 모든 첫 프레임은 반드시 I-Frame에서 시작해야 합니다.
+
+다른 프레임을 참조하지 않습니다.
+
+ 
+
+P-Frame(Prediceted Frame)
+순방향 예측 프레임
+
+바로 앞의 I-Frame을 기준으로 차이가 나는 부분 데이터만 저장한 프레임
+
+ 
+
+B-Frame(Bidirectional Frame)
+양방향 예측 프레임
+
+I-Frame과 P-Frame 사이에서 두 프레임을 모두 참조하여, 두 프레임 사이의 움직임을 추측 데이터로 저장한 프레임입니다.
+
+ 
+
+GOP 활용 예시
+![img]
