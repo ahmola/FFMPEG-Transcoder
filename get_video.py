@@ -9,14 +9,41 @@ from logger import logger
 """
 Obviously need to be fixed, because this was built for communication with the legacy code which doesn't care about the REST
 """
-HEADER_FORMAT = "<iiqiiii"  # 32 bytes
-CMD_PROC_VIDEO = 200
-CMD_TYPE_REQ = 1
+MP4_DUMP_PATH = "C:/Bento4-SDK-1-6-0-641.x86_64-microsoft-win32/bin/mp4dump.exe"
+
 frame_type_map = {
         1 : 'I-Frame',
         2 : 'P-Frame',
         3 : 'B-Frame',
 }
+
+packet_info = ",".join([
+    "pos",                 # 파일 내 오프셋
+    "pts_time","dts_time", # PTS/DTS(초)
+    "duration_time",       # 패킷 지속시간(초)  ← 주의: packet은 duration_time
+    "size","flags"         # 바이트 크기, 키플래그 등
+])
+
+frame_info = ",".join([
+    "coded_picture_number",
+    "display_picture_number", # 디코딩 순서 프레임 번호
+    "pict_type","key_frame", # 표시 순서 프레임 번호
+    "pkt_pts_time","pkt_dts_time", # I/P/B, 키프레임
+    "best_effort_timestamp_time", # PTS/DTS(초)
+    "pkt_duration_time", # PTS 없을 때 보정
+    "pkt_pos","pkt_pts_time","pkt_size", # 프레임 지속시간(초)
+    "interlaced_frame","top_field_first","repeat_pict", # 파일 내 오프셋
+    "side_data_list" # HDR 등 프레임 메타
+])
+
+args_ffprobe = [
+    "ffprobe", "-v", "error", "-print_format", "json",
+    "-show_entries",
+    "format=filename,format_name,format_long_name,nb_streams,duration,size,bit_rate:"
+    "format_tags=major_brand,minor_version,compatible_brands:"
+    "stream=index,codec_type,codec_name,codec_tag_string,profile,level,pix_fmt,width,height,field_order,avg_frame_rate,side_data_list,extradata_size",
+    "video.mp4"
+]
 
 def ffmpeg_remux():
     logger.info("Processing ffmpeg remux")
@@ -146,7 +173,7 @@ def request_vfs(vurix_web_url:str, from_date:str, to_date:str, token:str, api_se
             if chunk:
                 f.write(chunk)
 
-    # 리먹스 -> 실패하면 트랜스코드
+    # 윈도우에서도 재생가능한 형식으로 맞춤, 리먹스 -> 실패하면 트랜스코드
     if not ffmpeg_remux():
         ffmpeg_transcode()
 
@@ -182,20 +209,43 @@ def analyze_vfs(raw_data:io.BytesIO):
 
             print("--------------------------------------------------")
 
-        logger.info(f"Total I-Frame : {iframe_count}")
+        logger.info(f"Total I-Frame : {iframe_count}\n")
 
-        args = [
-            "ffprobe", "-v", "error", "-print_format", "json",
-            "-show_entries",
-            "format=filename,format_name,format_long_name,nb_streams,duration,size,bit_rate:"
-            "format_tags=major_brand,minor_version,compatible_brands:"
-            "stream=index,codec_type,codec_name,codec_tag_string,profile,level,pix_fmt,width,height,field_order,avg_frame_rate,side_data_list,extradata_size",
-            "video.mp4"
-        ]
-        # out = subprocess.check_output(args, text=True)
-        #
-        # open("headers.json", "w", encoding="utf-8").write(json.dumps(json.loads(out), indent=2, ensure_ascii=False))
-        open("boxes.json", "w", encoding="utf-8").write(subprocess.run(["mp4dump","--format","json","video_remux.mp4"], check=False, capture_output=True, text=True).stdout)
+        # 파일 정보 메타데이터
+        ffprobe_out = subprocess.check_output(args_ffprobe, text=True)
+        open("headers.json", "w", encoding="utf-8").write(ffprobe_out)
+        logger.info(f"FFProbe created headers.json")
+
+        # 어떻게 재생할 지를 담은 메타데이터
+        proc = subprocess.run(
+            [MP4_DUMP_PATH, "--format", "json", "video.mp4"],
+            capture_output=True, text=True
+        )
+        open("boxes.json", "w", encoding="utf-8").write(proc.stdout or "")
+        logger.info(f"MP4Dump created boxes.json")
+
+        if proc.stderr:
+            logger.error(f"MP4Dump error: {proc.stderr}")
+            open("mp4dump_error.log", "w", encoding="utf-8").write(proc.stderr)
+        logger.info("returncode:%s", proc.returncode)
+
+        open("frames.json", "w", encoding="utf-8").write(
+            subprocess.check_output([
+                "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames", "-show_entries",
+                f"frame={frame_info}",
+                "-of", "json", "video.mp4"
+            ], text=True)
+        )
+        logger.info(f"Frame Info created frames.json")
+
+        open("packets.json", "w", encoding="utf-8").write(
+            subprocess.check_output([
+                "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets", "-show_entries",
+                f"frame={packet_info}",
+                "-of", "json", "video.mp4"
+            ], text=True)
+        )
+        logger.info(f"Packet Info created packets.json")
 
     except av.PyAVCallbackError as e:
         logger.error(f"Cannot open or decode. mp4 maybe damaged : {e}")
@@ -203,7 +253,7 @@ def analyze_vfs(raw_data:io.BytesIO):
         logger.error("Cannot find mp4. Check the path")
 
 
-def receive_vfs(api: str):
+def receive_vfs(vurix_web_url: str):
     # 로그인 및 토큰 발급
     token, api_serial, user_serial, ctx_serial = request_login(vurix_web_url)
 
@@ -219,7 +269,7 @@ def receive_vfs(api: str):
     return mp4_raw_data
 
 if __name__ == '__main__':
-    vurix_web_url, mas_receiver_url = "", ""
+    api_url, tcp_socket_url = "", ""
 
     if len(sys.argv) != 2:
         logger.error("Need to specify two IP Addresses.")
@@ -237,6 +287,3 @@ if __name__ == '__main__':
 
     # 영상 파일 데이터 받음
     mp4_raw_data = receive_vfs(api_url)
-
-    # 영상 파일을 MAS Receiver에 소켓 전송
-    # send_data_to_mr(mp4_raw_data, mas_receiver_url)
