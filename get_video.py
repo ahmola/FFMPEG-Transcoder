@@ -78,7 +78,7 @@ def ffmpeg_transcode():
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {r.stderr}")
 
-def request_login(vurix_web_url:str):
+def request_login(api_url:str):
     # api header
     login_header = {
         "x-account-id": "admin",
@@ -93,7 +93,7 @@ def request_login(vurix_web_url:str):
     }
 
     # url 초기화
-    login_url = vurix_web_url + "/api/login"
+    login_url = api_url + "/api/login"
     logger.info(f"Request Login Get Request to {login_url}")
 
     # 요청을 보냄
@@ -108,7 +108,7 @@ def request_login(vurix_web_url:str):
 
     return token, api_serial, user_serial, ctx_serial
 
-def request_device_list(vurix_web_url:str, token:str, api_serial:str, user_serial:str, ctx_serial:str):
+def request_device_list(api_url:str, token:str, api_serial:str, user_serial:str, ctx_serial:str):
     # api header
     device_list_request_header = {
         "x-auth-token": token,
@@ -123,7 +123,7 @@ def request_device_list(vurix_web_url:str, token:str, api_serial:str, user_seria
     }
 
     # url
-    device_list_url = vurix_web_url + f"/api/device/list/{user_serial}/{ctx_serial}"
+    device_list_url = api_url + f"/api/device/list/{user_serial}/{ctx_serial}"
     logger.info(f"Request Device List Get Request to {device_list_url}")
 
     # device 리스트 추출
@@ -136,7 +136,7 @@ def request_device_list(vurix_web_url:str, token:str, api_serial:str, user_seria
 
     return dev_serial_list
 
-def request_vfs(vurix_web_url:str, from_date:str, to_date:str, token:str, api_serial:str, dev_serial_list):
+def request_video(api_url:str, from_date:str, to_date:str, token:str, api_serial:str, dev_serial_list):
     # api param
     mp4_request_param = {
         "from_date": from_date,
@@ -150,7 +150,7 @@ def request_vfs(vurix_web_url:str, from_date:str, to_date:str, token:str, api_se
     }
 
     # url 초기화
-    mp4_request_uri = vurix_web_url + f"/api/video/download/{dev_serial_list[-1]}/0"
+    mp4_request_uri = api_url + f"/api/video/download/{dev_serial_list[-1]}/0"
     logger.info(f"Request MP4 Get Request to {mp4_request_uri}")
 
     # 요청 전송
@@ -180,7 +180,7 @@ def request_vfs(vurix_web_url:str, from_date:str, to_date:str, token:str, api_se
     # 바이트 데이터 반환
     return mp4_raw_data
 
-def analyze_vfs(raw_data:io.BytesIO):
+def analyze_video(raw_data:io.BytesIO):
     try:
         # 바이트 데이터를 읽어들임
         container = av.open(raw_data)
@@ -247,24 +247,34 @@ def analyze_vfs(raw_data:io.BytesIO):
         )
         logger.info(f"Packet Info created packets.json")
 
+        # 프레임을 다른 서버로 전송
+        for frame in container.demux(stream):
+            h264_bytes = bytes(frame)
+            logger.info(f"Frame H.264 Bytes : {h264_bytes}")
+
+            packet = build_packet(channel_id, h264_bytes, True)
+            logger.info(f"Packet Ready : {packet}")
+
+            s.sendall(packet)
+
     except av.PyAVCallbackError as e:
         logger.error(f"Cannot open or decode. mp4 maybe damaged : {e}")
     except FileNotFoundError:
         logger.error("Cannot find mp4. Check the path")
 
 
-def receive_vfs(vurix_web_url: str):
+def receive_video(api_url: str):
     # 로그인 및 토큰 발급
-    token, api_serial, user_serial, ctx_serial = request_login(vurix_web_url)
+    token, api_serial, user_serial, ctx_serial = request_login(api_url)
 
     # 장비 목록 조회 GET 요청
-    dev_serial_list = request_device_list(vurix_web_url, token, api_serial, user_serial, ctx_serial)
+    dev_serial_list = request_device_list(api_url, token, api_serial, user_serial, ctx_serial)
 
     # 영상 다운로드 GET요청
-    mp4_raw_data = request_vfs(vurix_web_url, "202508251721", "202508251725", token, api_serial, dev_serial_list)
+    mp4_raw_data = request_video(api_url, "202508251721", "202508251725", token, api_serial, dev_serial_list)
 
     # av 모듈로 프레임 메타 데이터 추출
-    analyze_vfs(mp4_raw_data)
+    analyze_video(mp4_raw_data)
 
     return mp4_raw_data
 
@@ -286,4 +296,4 @@ if __name__ == '__main__':
     logger.info(f"API Url: {api_url}, tcp_socket_url: {tcp_socket_url}")
 
     # 영상 파일 데이터 받음
-    mp4_raw_data = receive_vfs(api_url)
+    mp4_raw_data = receive_video(api_url)
